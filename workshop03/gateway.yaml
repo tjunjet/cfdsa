@@ -1,0 +1,32 @@
+# Expose the application with the name umami-<loadbalancer-ip>.nip.io
+# 1. Gateway: umami-gateway (Cilium, HTTP listener, fixed load balancer IP)
+# 2. HTTP Route: umamiapp-httproute, with umami-gateway as its parentRef
+#
+# LOADBALANCER IP: 172.25.255.200
+#   Taken from the kind Docker network (172.25.0.0/16). It must be inside a
+#   CiliumLoadBalancerIPPool. If you change it, change it in all 3 places below.
+
+# 1. Gateway umami-gateway
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: umamiapp-httproute
+  namespace: workshop03
+  labels:
+    app: umami
+    tier: application
+spec:
+  parentRefs:
+    - name: umami-gateway
+      sectionName: http                # attach to the HTTP listener
+  hostnames:
+    - umami-172.25.255.200.nip.io
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /
+      backendRefs:
+        - name: umamiapp-svc
+          port: 3000

@@ -1,0 +1,72 @@
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: bggapp-deploy
+  namespace: bggns
+  labels:
+    app: bgg
+    tier: backend
+spec:
+  replicas: 3
+  minReadySeconds: 10 # new pod must stay Ready 10s before it counts as available
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1 # at most 1 extra pod (4 total) during an upgrade
+      maxUnavailable: 0 # never drop below 3 ready pods -> zero downtime
+  selector:
+    matchLabels:
+      app: bgg
+      tier: backend
+  template:
+    metadata:
+      labels:
+        app: bgg
+        tier: backend
+    spec:
+      containers:
+        - name: bggapp-container
+          image: stackupiss/bgg-backend:v2
+          imagePullPolicy: IfNotPresent
+          envFrom: # load all keys from config.yaml as env vars
+            - configMapRef:
+                name: bggapp-config # BGG_DB_USER, BGG_DB_HOST
+            - secretRef:
+                name: bggapp-secret # BGG_DB_PASSWORD
+          ports:
+            - name: app-port
+              containerPort: 3000
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: app-port
+            periodSeconds: 10
+            timeoutSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: app-port
+            periodSeconds: 20
+            timeoutSeconds: 5
+            failureThreshold: 3
+
+# Application service: exposed outside the cluster (LoadBalancer)
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: bggapp-svc
+  namespace: bggns
+  labels:
+    app: bgg
+    tier: backend
+spec:
+  type: LoadBalancer
+  selector:
+    app: bgg
+    tier: backend
+  ports:
+    - name: http
+      port: 80
+      targetPort: app-port

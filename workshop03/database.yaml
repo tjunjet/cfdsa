@@ -1,0 +1,99 @@
+# This is the YAML file for the deployment of the database
+
+# 1. We need to provision 1GB of volume and mount it in the pod under
+# /var/lib/postgresql/data
+
+# Database persistent volume claim umamidb-pvc
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: umamidb-pvc
+  namespace: workshop03
+  labels:
+    app: umami
+    tier: database
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Gi
+
+# 2. Database deployment umamidb-deploy (single replica, Recreate strategy)
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: umamidb-deploy
+  namespace: workshop03
+  labels:
+    app: umami
+    tier: database
+spec:
+  replicas: 1 # Only put one for 1 database
+  strategy:
+    type: Recreate   # old pod releases the RWO volume before the new pod starts
+  selector:
+    matchLabels:
+      app: umami
+      tier: database
+  template:
+    metadata:
+      labels:
+        app: umami
+        tier: database
+    spec:
+      volumes:
+        - name: data-vol
+          persistentVolumeClaim:
+            claimName: umamidb-pvc
+      containers:
+        - name: umamidb-container
+          image: postgres:16-alpine
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: postgres
+              containerPort: 5432
+          envFrom:
+            - configMapRef:
+                name: umamidb-config   # POSTGRES_USER, POSTGRES_DB
+            - secretRef:
+                name: umamidb-secret   # POSTGRES_PASSWORD
+          env:
+            - name: PGDATA
+              value: /var/lib/postgresql/data/pgdata
+          volumeMounts:
+            - name: data-vol
+              mountPath: /var/lib/postgresql/data
+          readinessProbe:
+            exec:
+              # sh -c so the env vars from the ConfigMap get expanded
+              command:
+                - sh
+                - -c
+                - pg_isready -h 127.0.0.1 -p 5432 -U "$POSTGRES_USER" -d "$POSTGRES_DB"
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 6
+
+# Database service umamidb-svc. 
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: umamidb-svc
+  namespace: workshop03
+  labels:
+    app: umami
+    tier: database
+spec:
+  type: ClusterIP # Service only accessible in the cluster
+  selector:
+    app: umami
+    tier: database
+  ports:
+    - name: postgres
+      port: 5432
+      targetPort: postgres

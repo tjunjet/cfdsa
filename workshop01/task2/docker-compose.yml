@@ -1,0 +1,35 @@
+# Volumes
+volumes:
+  # docker volume create data-vol
+  data-vol:
+
+# Create a docker network called mynet
+networks:
+  # docker network create mynet
+  mynet:
+
+# Running the various docker containers
+services:
+  # First we create the database container
+  # docker run -d -volume type=volume,src=data-vol,dst=/var/lib/mysql \
+  # --name=db stackupiss/northwind-db:v1
+  db: # docker --name
+    # MySQL image, no ports as we don't expose the database to the outside world
+    image: stackupiss/northwind-db:v1
+    networks:
+      - mynet
+    volumes:
+      - data-vol:/var/lib/mysql
+  # Application container
+  # docker run -d -p 8080:3000 --name=app --network=mynet \
+  # -e DB+HOST=db -e DB_USER=root -e DB_USER=root -e DB_PASSWORD=changeit stackupiss/northwind-app:v1
+  app:
+    image: stackupiss/northwind-app:v1
+    networks:
+      - mynet
+    environment:
+      - DB_HOST=db # Connect to the database.
+      - DB_USER=root
+      - DB_PASSWORD=changeit
+    ports:
+      - 8080:3000
