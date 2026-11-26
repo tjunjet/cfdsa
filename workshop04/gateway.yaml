@@ -1,0 +1,51 @@
+# To expose two HTTP Routes for data and console
+# 1. HTTPRoute rustfs-data-route:    data.<LB_IP>.nip.io    -> rustfs-svc:9000 (S3 API)
+# 2. HTTPRoute rustfs-console-route: console.<LB_IP>.nip.io -> rustfs-svc:9001 (web console)
+
+# 1. HTTPRoute for the S3 endpoint
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: rustfs-data-route
+  namespace: workshop04             
+  labels:
+    app: rustfs
+spec:
+  parentRefs:
+    - name: default-gtw
+      namespace: default
+  hostnames:
+    - data.172.25.255.200.nip.io
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /                
+      backendRefs:
+        - name: rustfs-svc
+          port: 9000                
+
+# 2. HTTPRoute for the web console
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: rustfs-console-route
+  namespace: workshop04
+  labels:
+    app: rustfs
+spec:
+  parentRefs:
+    - name: default-gateway
+      namespace: default
+  hostnames:
+    - console.172.25.255.200.nip.io
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /
+      backendRefs:
+        - name: rustfs-svc
+          port: 9001                

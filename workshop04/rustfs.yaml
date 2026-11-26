@@ -1,0 +1,129 @@
+# File to create services to have rustfs.
+
+# 1. Creation of the nodes (StatefulSet)
+#    Pods: rustfs-0, rustfs-1, rustfs-2
+#    PVCs: data-rustfs-0, data-rustfs-1, data-rustfs-2 (one disk per pod, mounted at /data)
+---
+apiVersion: apps/v1
+kind: StatefulSet # Stateful instead of Deployment (stateless)
+metadata:
+  name: rustfs                      # pod names = rustfs-<n>; must match RUSTFS_VOLUMES in configs.yaml
+  namespace: workshop04
+  labels:
+    app: rustfs
+spec:
+  serviceName: rustfs-hsvc          # the headless Service (section 2); creates the per-pod DNS names
+  replicas: 3                       # 3 nodes = rustfs-{0...2} in RUSTFS_VOLUMES
+  podManagementPolicy: Parallel     # Start pods simultaneously to prevent deadlock
+  selector:
+    matchLabels:
+      app: rustfs                   
+  template:
+    metadata:
+      labels:
+        app: rustfs
+    spec:
+      securityContext:
+        runAsNonRoot: true            # kubelet refuses to start the container if it would run as root
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001                # volume /data is group-owned by GID 10001 -> UID 10001 can read/write
+        fsGroupChangePolicy: OnRootMismatch   # only re-chown when needed (faster restarts)
+      containers:
+        - name: rustfs-container
+          image: rustfs/rustfs:latest 
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: s3
+              containerPort: 9000   # RUSTFS_ADDRESS
+            - name: console
+              containerPort: 9001   # RUSTFS_CONSOLE_ADDRESS
+          envFrom:
+            - configMapRef:
+                name: rustfs-config   # RUSTFS_ADDRESS, RUSTFS_CONSOLE_*, RUSTFS_VOLUMES
+            - secretRef:
+                name: rustfs-secret   # RUSTFS_ACCESS_KEY, RUSTFS_SECRET_KEY
+          securityContext:
+            allowPrivilegeEscalation: false   # the process can't gain root later (e.g. via setuid)
+          resources:
+            requests:
+              cpu: 200m
+              memory: 250M
+            limits:
+              cpu: 200m
+              memory: 250M
+          volumeMounts:
+            - name: data              
+              mountPath: /data        # must match the /data in RUSTFS_VOLUMES
+          # Ready once the S3 port accepts connections. Generous thresholds because
+          # the 3 nodes need time to find each other and form the cluster.
+          readinessProbe:
+            tcpSocket:
+              port: 9000
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 6
+          livenessProbe:
+            tcpSocket:
+              port: 9000
+            initialDelaySeconds: 60
+            periodSeconds: 20
+            timeoutSeconds: 5
+            failureThreshold: 6
+
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+        labels:
+          app: rustfs               
+      spec:
+        accessModes:
+          - ReadWriteOnce           
+        resources:
+          requests:
+            storage: 1G             
+
+
+# 2. Creation of the headless service
+#    Each RustFS node must reach every other node listed in RUSTFS_VOLUMES or it fails to start.
+#    This Service creates the DNS names those entries use:
+#      rustfs-0.rustfs-hsvc.workshop04.svc.cluster.local -> pod rustfs-0 (and same for 1, 2)
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: rustfs-hsvc                 # Headless service
+  namespace: workshop04
+  labels:
+    app: rustfs
+spec:
+  clusterIP: None                   # headless: DNS returns each pod's IP, no load-balanced virtual IP
+  publishNotReadyAddresses: true
+  selector:
+    app: rustfs                     
+  ports:
+    - name: s3
+      port: 9000                    
+      targetPort: 9000
+
+# 3. Creation of the ClusterIP service (client facing)
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: rustfs-svc                  # must match backendRefs in gateway.yaml
+  namespace: workshop04
+  labels:
+    app: rustfs
+spec:
+  type: ClusterIP                   
+  selector:
+    app: rustfs                    
+  ports:
+    - name: s3
+      port: 9000                    # data.<LB_IP>.nip.io -> rustfs-svc:9000
+      targetPort: s3                # the containerPort named "s3" (9000) in the StatefulSet
+    - name: console
+      port: 9001                    # console.<LB_IP>.nip.io -> rustfs-svc:9001
+      targetPort: console           # the containerPort named "console" (9001)
